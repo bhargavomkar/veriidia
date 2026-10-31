@@ -4,6 +4,10 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "cleanUrls": true,
+  "functions": {
+    "api/registration/[action].js": { "maxDuration": 240 },
+    "api/registration/session/close.js": { "maxDuration": 30 }
+  },
   "headers": [
     {
       "source": "/(.*)",

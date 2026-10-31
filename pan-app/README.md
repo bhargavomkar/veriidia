@@ -1,6 +1,6 @@
 # Veriidia PAN registration
 
-This app has a static HTML/CSS/JavaScript frontend, Vercel serverless API functions, and a FastAPI/Playwright browser service for the live Protean flow. The Vercel API currently provides a Neon database health check and an explicit unavailable response for registration until a persistent browser worker is configured.
+This app has a static HTML/CSS/JavaScript frontend, Vercel serverless API functions, Neon PostgreSQL, and Browserbase-hosted Playwright sessions for the live Protean flow. The API reconnects to the same remote browser session for each step; Vercel does not keep browser state in function memory.
 
 ## Local run
 
@@ -20,9 +20,11 @@ The local FastAPI service can launch a visible Chromium session, show it through
 
 ## Vercel deployment
 
-Use `pan-app` as the Vercel project root, the Other framework preset, `npm run build`, and `dist` as the output directory. Set `DATABASE_URL` in Vercel as a server-side secret. `/api/health` checks that Neon is reachable and returns no connection details.
+Use `pan-app` as the Vercel project root, the Other framework preset, `npm run build`, and `dist` as the output directory. Set `DATABASE_URL` and `BROWSERBASE_API_KEY` in Vercel as server-side secrets. `/api/health` checks Neon and reports whether Browserbase is configured without returning credentials.
 
-The browser workflow is not available on this Vercel-only deployment. It needs one persistent Playwright/Chromium worker that keeps the live Protean page and session available between API requests and serves the interactive browser viewer. Vercel Functions have bounded lifetimes and may route separate requests to different instances, so the current in-memory session and viewer cannot safely be moved into stateless functions. Until a persistent browser worker is configured, `/api/registration/start` returns an explicit error and does not open Protean or claim a registration started.
+Create a Browserbase account, choose a plan that supports keep-alive sessions, and add its API key to Vercel as `BROWSERBASE_API_KEY`. The functions create a 15-minute session in the Singapore region, explicitly disable Browserbase logs and recordings, and leave CAPTCHA solving and automated submission disabled. The user controls the embedded live view and submits directly on Protean if they choose. Keep-alive is needed because each browser step runs in a separate Vercel function.
+
+No Browserbase API key is stored in the repository or sent to the browser. Applicant values are held only in the fill request while they are typed; the database stores a hashed session token, Browserbase session ID, field verification statuses, and provider response metadata. The Browserbase session itself is configured not to retain logs or video recordings.
 
 If this deployment is configured from the repository root instead, the root `vercel.json` builds and publishes `pan-app/dist`. Ensure the API functions in `pan-app/api` are included in the configured project root; prefer setting the project root to `pan-app`.
 

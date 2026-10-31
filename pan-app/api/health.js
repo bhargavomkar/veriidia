@@ -15,7 +15,11 @@ export default async function handler(req, res) {
     const sql = neon(databaseUrl);
     const result = await sql`SELECT 1 AS ok`;
     if (Number(result[0]?.ok) !== 1) throw new Error('Health query did not return the expected result.');
-    return res.status(200).json({ status: 'ok', database: 'connected' });
+    return res.status(200).json({
+      status: 'ok',
+      database: 'connected',
+      browserService: process.env.BROWSERBASE_API_KEY ? 'configured' : 'not_configured',
+    });
   } catch {
     return res.status(503).json({ status: 'error', database: 'unavailable' });
   }
