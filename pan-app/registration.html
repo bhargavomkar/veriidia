@@ -88,9 +88,23 @@
       let submissionAttempted = false;
       const API_BASE = (window.VERIIDIA_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
       const api = async (path, method='GET', body) => {
-        const response = await fetch(API_BASE+'/api/registration'+path, {method, headers:{...(sessionToken?{Authorization:'Bearer '+sessionToken}:{}), ...(body?{'Content-Type':'application/json'}:{})}, body:body?JSON.stringify(body):undefined});
-        const result = await response.json().catch(()=>({}));
-        if(!response.ok) throw new Error(result.detail || 'The registration session could not continue.');
+        const endpoint=API_BASE+'/api/registration'+path;
+        const controller=new AbortController();
+        const timeout=setTimeout(()=>controller.abort(),path==='/start'?90000:path==='/submit'?75000:30000);
+        let response;
+        try {
+          response=await fetch(endpoint,{method,headers:{...(sessionToken?{Authorization:'Bearer '+sessionToken}:{}),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:controller.signal});
+        } catch(error) {
+          if(path==='/submit')throw new Error('The connection ended while waiting for Protean’s response. The result may be uncertain. Check the visible Protean page before taking any further action.');
+          if(error.name==='AbortError')throw new Error('The registration service did not respond in time. It may be starting or temporarily unavailable. Retry after checking service health; no submission was made.');
+          throw new Error('Could not reach the registration backend at '+(API_BASE||window.location.origin)+'. Check that the Render service is running and allows this Vercel origin. No registration was submitted.');
+        } finally { clearTimeout(timeout); }
+        const result=await response.json().catch(()=>({}));
+        if(!response.ok) {
+          if(response.status===404)throw new Error('The registration backend returned HTTP 404 for '+endpoint+'. Confirm that the latest backend is deployed with this route.');
+          if([502,503,504].includes(response.status))throw new Error('The registration backend is temporarily unavailable (HTTP '+response.status+'). It may be starting or reconnecting to its database. Retry after checking service health.');
+          throw new Error(result.detail||result.error||('The registration backend returned HTTP '+response.status+'.'));
+        }
         return result;
       };
       const labels = {first_name:'First name',middle_name:'Middle name',last_name:'Last name / surname',date_of_birth:'Date of birth',email:'Email address',mobile:'Indian mobile number'};

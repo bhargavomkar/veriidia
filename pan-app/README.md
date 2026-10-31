@@ -28,13 +28,13 @@ Set this Vercel environment variable for Production and Preview as appropriate:
 
 | Name | Value | Secret? |
 | --- | --- | --- |
-| `VERIIDIA_API_BASE_URL` | HTTPS origin of the persistent backend, for example `https://your-backend.onrender.com` | No. This is a public API origin embedded in the static build. |
+| `VERIIDIA_API_BASE_URL` | `https://veriidia-pan-backend.onrender.com` | No. This is a public API origin embedded in the static build. |
 
 Set the variable to the actual Render HTTPS origin. If it is absent, the build uses the hostname planned by the Render Blueprint (`https://veriidia-pan-backend.onrender.com`); override it if Render assigns a different hostname. The build emits a restrictive content security policy for the configured API and viewer origins.
 
 ## Persistent backend on Render
 
-The backend uses Docker, Xvfb, Chromium, noVNC, websockify, and Nginx in one service. Deploy the Blueprint at `pan-app/render.yaml` from the repository root. Choose a paid always-on web service with enough memory for Chromium. Render's health check is `/api/health`; HTTP and WebSocket viewer traffic share port `10000`.
+The backend uses Docker, Xvfb, Chromium, noVNC, websockify, and Nginx in one service. Deploy the Blueprint at `pan-app/render.yaml` from the repository root. Choose a paid always-on web service with enough memory for Chromium. Render's health check is `/health`; `/api/health` remains available as a compatibility route. HTTP and WebSocket viewer traffic share port `10000`.
 
 Configure these Render environment variables:
 
@@ -42,11 +42,11 @@ Configure these Render environment variables:
 | --- | --- |
 | `APP_ENV` | `production` (set by the Blueprint) |
 | `VERIIDIA_CORS_ORIGINS` | Exact HTTPS Vercel deployment origins, comma separated; no wildcard and no trailing slash. The Blueprint includes `https://veriidiaprototype.vercel.app`; update it if the production domain differs. |
-| `DATABASE_URL` | Neon pooled PostgreSQL connection string (secret; set in Render only). |
+| `DATABASE_URL` | Neon pooled PostgreSQL connection string with `sslmode=require` (secret; set in Render only). |
 | `PROTEAN_AUTOMATED_SUBMISSION_PERMITTED` | `false` (set by the Blueprint; leave false until provider-specific permission is verified) |
 | `REGISTRATION_SESSION_IDLE_TIMEOUT_SECONDS` | Optional; defaults to 900 seconds. |
 
-The backend refuses to start in production when the trusted origin list is empty, wildcarded, or contains a non-HTTPS origin. Configure the chosen Vercel hostname in Render and the Render hostname in Vercel, then deploy both services.
+The backend refuses to start in production when the trusted origin list is empty, wildcarded, or contains a non-HTTPS origin. `/health` performs a live `SELECT 1` connectivity check and reports only a database status, never connection details. Configure the chosen Vercel hostname in Render and the Render hostname in Vercel, then deploy both services.
 
 ## Sessions, documents, database, and security
 

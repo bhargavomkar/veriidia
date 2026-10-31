@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 from uuid import UUID
+from urllib.parse import parse_qs, urlparse
 
 from psycopg_pool import ConnectionPool
 
 pool: ConnectionPool | None = None
+logger = logging.getLogger("veriidia.database")
 
 
 def is_configured() -> bool:
@@ -21,6 +24,10 @@ def is_ready() -> bool:
 
 def _initialize_sync(database_url: str) -> None:
     global pool
+    parsed = urlparse(database_url)
+    sslmode = parse_qs(parsed.query).get("sslmode", [""])[0].casefold()
+    if parsed.scheme not in {"postgres", "postgresql"} or sslmode not in {"require", "verify-ca", "verify-full"}:
+        raise RuntimeError("DATABASE_URL must be a PostgreSQL URL with SSL required.")
     candidate = ConnectionPool(
         conninfo=database_url,
         min_size=1,
@@ -63,6 +70,22 @@ async def initialize(*, required: bool) -> None:
             raise RuntimeError("Production requires DATABASE_URL for registration session records.")
         return
     await asyncio.to_thread(_initialize_sync, database_url)
+
+
+def _ping_sync() -> bool:
+    if pool is None or pool.closed:
+        return False
+    try:
+        with pool.connection(timeout=5) as connection:
+            query_ok = connection.execute("SELECT 1").fetchone() == (1,)
+            return query_ok and bool(connection.pgconn.ssl_in_use)
+    except Exception as exc:
+        logger.warning("Neon connectivity check failed: %s", type(exc).__name__)
+        return False
+
+
+async def ping() -> bool:
+    return await asyncio.to_thread(_ping_sync)
 
 
 def _record_created_sync(session_id: UUID, digest: str, status: str) -> None:

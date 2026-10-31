@@ -1,6 +1,13 @@
 #!/bin/sh
 set -eu
 
+PORT="${PORT:-10000}"
+case "$PORT" in
+  ''|*[!0-9]*) echo "PORT must be a numeric TCP port." >&2; exit 1 ;;
+esac
+export PORT
+envsubst '${PORT}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+
 Xvfb :99 -screen 0 1365x900x24 -ac +extension RANDR >/dev/null 2>&1 &
 for attempt in $(seq 1 30); do
   if xdpyinfo -display :99 >/dev/null 2>&1; then break; fi

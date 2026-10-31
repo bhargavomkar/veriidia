@@ -40,13 +40,15 @@ class RegistrationTests(unittest.TestCase):
 
     def test_only_real_registration_ui_and_routes_are_served(self):
         with TestClient(backend.app) as client:
-            health = client.get("/api/health")
-            self.assertEqual(health.status_code, 200)
-            self.assertEqual(health.json()["provider"], "protean")
-            self.assertTrue(health.json()["liveProviderAutomation"])
-            self.assertFalse(health.json()["automatedSubmissionPermitted"])
-            if live_registration.database.is_configured():
-                self.assertTrue(health.json()["databaseReady"])
+            for path in ("/health", "/api/health"):
+                health = client.get(path)
+                self.assertEqual(health.status_code, 200)
+                self.assertEqual(health.json()["provider"], "protean")
+                self.assertTrue(health.json()["liveProviderAutomation"])
+                self.assertFalse(health.json()["automatedSubmissionPermitted"])
+                if live_registration.database.is_configured():
+                    self.assertTrue(health.json()["databaseReady"])
+                    self.assertEqual(health.json()["databaseStatus"], "connected")
             self.assertIn("VERIIDIA", client.get("/").text)
             self.assertIn(live_registration.PROTEAN_URL, client.get("/registration").text)
             self.assertIn("apiBaseUrl", client.get("/veriidia-config.js").text)

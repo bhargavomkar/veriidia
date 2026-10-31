@@ -5,7 +5,7 @@ services:
     plan: standard
     dockerfilePath: ./pan-app/Dockerfile
     dockerContext: ./pan-app
-    healthCheckPath: /api/health
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: APP_ENV

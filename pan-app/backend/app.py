@@ -119,15 +119,22 @@ async def registration():
     return FileResponse(ROOT / "registration.html")
 
 
+@app.get("/health")
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
+    production = os.getenv("APP_ENV", "development").casefold() == "production"
+    configured = database.is_configured()
+    connected = await database.ping() if configured else False
+    db_status = "connected" if connected else ("unavailable" if configured else "not_configured")
+    status = "ok" if connected or not production else "degraded"
+    return JSONResponse(status_code=200 if connected or not production else 503, content={
+        "status": status,
         "provider": "protean",
         "liveProviderAutomation": True,
         "automatedSubmissionPermitted": AUTOMATED_SUBMISSION_PERMITTED,
-        "databaseReady": database.is_ready(),
-    }
+        "databaseReady": connected,
+        "databaseStatus": db_status,
+    })
 
 
 @app.get("/veriidia-config.js", include_in_schema=False)
