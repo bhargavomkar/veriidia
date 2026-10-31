@@ -97,12 +97,13 @@
         } catch(error) {
           if(path==='/submit')throw new Error('The connection ended while waiting for Protean’s response. The result may be uncertain. Check the visible Protean page before taking any further action.');
           if(error.name==='AbortError')throw new Error('The registration service did not respond in time. It may be starting or temporarily unavailable. Retry after checking service health; no submission was made.');
-          throw new Error('Could not reach the registration backend at '+(API_BASE||window.location.origin)+'. Check that the Render service is running and allows this Vercel origin. No registration was submitted.');
+          throw new Error('Could not reach Veriidia’s registration API at '+(API_BASE||window.location.origin)+'. Check the Vercel deployment and try again. No registration was submitted.');
         } finally { clearTimeout(timeout); }
         const result=await response.json().catch(()=>({}));
         if(!response.ok) {
           if(response.status===404)throw new Error('The registration backend returned HTTP 404 for '+endpoint+'. Confirm that the latest backend is deployed with this route.');
-          if([502,503,504].includes(response.status))throw new Error('The registration backend is temporarily unavailable (HTTP '+response.status+'). It may be starting or reconnecting to its database. Retry after checking service health.');
+          if(result.code==='PERSISTENT_BROWSER_REQUIRED')throw new Error(result.detail||'Live Protean registration is not configured. No registration was started.');
+          if([502,503,504].includes(response.status))throw new Error(result.detail||'The registration service is temporarily unavailable (HTTP '+response.status+'). No registration was submitted.');
           throw new Error(result.detail||result.error||('The registration backend returned HTTP '+response.status+'.'));
         }
         return result;

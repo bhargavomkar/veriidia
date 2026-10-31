@@ -9,5 +9,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node --check scripts/build.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
   }
 }
