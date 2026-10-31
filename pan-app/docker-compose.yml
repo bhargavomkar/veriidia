@@ -1,6 +1,9 @@
 services:
   pan-app:
     build: .
+    env_file:
+      - path: .env
+        required: false
     environment:
       APP_ENV: local
       PROTEAN_AUTOMATED_SUBMISSION_PERMITTED: ${PROTEAN_AUTOMATED_SUBMISSION_PERMITTED:-false}

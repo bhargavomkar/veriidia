@@ -45,8 +45,11 @@ class RegistrationTests(unittest.TestCase):
             self.assertEqual(health.json()["provider"], "protean")
             self.assertTrue(health.json()["liveProviderAutomation"])
             self.assertFalse(health.json()["automatedSubmissionPermitted"])
+            if live_registration.database.is_configured():
+                self.assertTrue(health.json()["databaseReady"])
             self.assertIn("VERIIDIA", client.get("/").text)
             self.assertIn(live_registration.PROTEAN_URL, client.get("/registration").text)
+            self.assertIn("apiBaseUrl", client.get("/veriidia-config.js").text)
             self.assertIn('id="supporting-files"', client.get("/registration").text)
             self.assertEqual(client.get("/sandbox").status_code, 404)
             self.assertEqual(client.post("/api/demo/session").status_code, 404)
@@ -55,6 +58,10 @@ class RegistrationTests(unittest.TestCase):
     def test_registration_api_requires_a_bearer_session(self):
         with TestClient(backend.app) as client:
             self.assertEqual(client.get("/api/registration/status").status_code, 401)
+
+    def test_remote_browser_viewer_requires_a_session_ticket(self):
+        with TestClient(backend.app) as client:
+            self.assertEqual(client.get("/api/registration/viewer-authorized").status_code, 401)
 
     def test_no_static_success_or_acknowledgement_claims(self):
         root = Path(__file__).resolve().parents[1]

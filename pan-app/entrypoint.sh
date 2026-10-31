@@ -8,6 +8,7 @@ for attempt in $(seq 1 30); do
 done
 x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw >/dev/null 2>&1 &
 websockify --web=/usr/share/novnc/ 6080 localhost:5900 >/dev/null 2>&1 &
+nginx
 
 exec gosu runner uvicorn backend.app:app \
   --app-dir /opt/veriidia \

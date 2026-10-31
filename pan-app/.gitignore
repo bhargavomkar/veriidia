@@ -1,4 +1,10 @@
 .venv/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.vercel/
 __pycache__/
 *.py[cod]
 .pytest_cache/

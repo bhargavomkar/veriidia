@@ -1,8 +1,10 @@
 # Veriidia PAN registration
 
-This local application assists with the **initial Protean New PAN Form 93 (Indian Citizen)** registration page. It does not imitate Protean and does not automate later PAN application stages.
+Veriidia's PAN application is a plain HTML/CSS/JavaScript frontend with a FastAPI backend and a visible Playwright Chromium session. The browser session is long-running and interactive, so it must run on a persistent container host. Vercel serves only the frontend.
 
-## Run locally
+The workflow targets only the official Protean initial Form 93 registration page. CAPTCHA and provider consent stay user controlled. Automated submission remains disabled unless Protean's service-specific permission is verified. The application does not automate later PAN stages.
+
+## Local run
 
 Use Docker Compose v2 from this directory:
 
@@ -10,48 +12,69 @@ Use Docker Compose v2 from this directory:
 docker compose up --build
 ~~~
 
-Open `http://127.0.0.1:8000`. In Docker, a visible Playwright Chromium session is shown through the local noVNC viewer. Without Docker, run the FastAPI app directly and Chromium opens in a separate desktop window:
+Open `http://127.0.0.1:8000`. The local gateway routes the app API and the authenticated noVNC viewer to the backend container.
+
+Without Docker, install `backend/requirements.txt`, set the pooled Neon `DATABASE_URL` in a local ignored `.env` file, install Chromium with `python -m playwright install chromium`, and run:
 
 ~~~powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r backend\requirements.txt
-python -m playwright install chromium
 uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ~~~
 
-The app opens only the exact Protean registration page and its first registration response. Its request allowlist includes Protean page resources and CAPTCHA resources. It blocks other navigation destinations and later top-level PAN stages.
+## Vercel frontend
 
-## Registration workflow
+Create a separate Vercel project for this repository and use the repository root as its **Root Directory**. Use the Other framework preset. The root `vercel.json` explicitly runs `npm --prefix pan-app run build` and publishes `pan-app/dist`, preventing Vercel from trying to run the Playwright backend as a Vercel Function. If you set the Vercel Root Directory to `pan-app` instead, its `vercel.json` runs `npm run build` and publishes `dist`.
 
-1. Enter the initial registration details in Veriidia and review them.
-2. Choose **Start Registration**. Playwright opens the real Protean page, selects Form 93 through its visible control, and fills fields that Protean currently exposes. Veriidia checks the values by reading them back.
-3. Solve CAPTCHA and review/check consent yourself in the visible Protean browser. CAPTCHA is never solved or bypassed by Veriidia.
-4. Provider-specific terms for automated submission could not be verified. Automated submission is therefore disabled by default. Use Protean's own Submit control if you choose; Veriidia can display the actual initial response when the provider returns it in the first response page.
+Set this Vercel environment variable for Production and Preview as appropriate:
 
-The optional supporting-document picker keeps selected file references in the current page only. It does not upload files, inspect contents, run OCR, or transfer documents. The initial Protean registration page has no document upload field; provide documents directly to Protean only if a later step requests them.
+| Name | Value | Secret? |
+| --- | --- | --- |
+| `VERIIDIA_API_BASE_URL` | HTTPS origin of the persistent backend, for example `https://your-backend.onrender.com` | No. This is a public API origin embedded in the static build. |
 
-Automated submit can only be enabled after Protean's service-specific permission has been verified. The Docker Compose variable `PROTEAN_AUTOMATED_SUBMISSION_PERMITTED` defaults to `false`. Do not set it to `true` unless that permission has been established. A separate in-app confirmation remains required when enabled.
+Set the variable to the actual Render HTTPS origin. If it is absent, the build uses the hostname planned by the Render Blueprint (`https://veriidia-pan-backend.onrender.com`); override it if Render assigns a different hostname. The build emits a restrictive content security policy for the configured API and viewer origins.
 
-## Data and session handling
+## Persistent backend on Render
 
-Applicant values are sent to the local backend only when Start Registration is chosen, so Playwright can enter them on Protean. The backend does not persist form values or log them. Selected files stay in page memory and are not read. Use **Finish and clear this session** to clear the page and close the browser. Closing the app also tears down the Playwright session.
+The backend uses Docker, Xvfb, Chromium, noVNC, websockify, and Nginx in one service. Deploy the Blueprint at `pan-app/render.yaml` from the repository root. Choose a paid always-on web service with enough memory for Chromium. Render's health check is `/api/health`; HTTP and WebSocket viewer traffic share port `10000`.
 
-This is a local, single-user prototype, not a production service. It has no database, account system, or persistent profile store. Do not expose the Docker Compose gateway to a public network. Production use would require authenticated access, TLS, per-user browser isolation, retention and privacy review, and verified provider permission.
+Configure these Render environment variables:
 
-## Tests
+| Name | Value |
+| --- | --- |
+| `APP_ENV` | `production` (set by the Blueprint) |
+| `VERIIDIA_CORS_ORIGINS` | Exact HTTPS Vercel deployment origins, comma separated; no wildcard and no trailing slash. The Blueprint includes `https://veriidiaprototype.vercel.app`; update it if the production domain differs. |
+| `DATABASE_URL` | Neon pooled PostgreSQL connection string (secret; set in Render only). |
+| `PROTEAN_AUTOMATED_SUBMISSION_PERMITTED` | `false` (set by the Blueprint; leave false until provider-specific permission is verified) |
+| `REGISTRATION_SESSION_IDLE_TIMEOUT_SECONDS` | Optional; defaults to 900 seconds. |
 
-Run backend and route tests with:
+The backend refuses to start in production when the trusted origin list is empty, wildcarded, or contains a non-HTTPS origin. Configure the chosen Vercel hostname in Render and the Render hostname in Vercel, then deploy both services.
+
+## Sessions, documents, database, and security
+
+- The backend uses a random bearer token for each browser session, checks the configured Vercel origin on state-changing requests, and expires an idle session after 15 minutes. Only one active Playwright session is supported per backend instance. Do not scale this service horizontally without moving session routing/state to a design that preserves browser affinity.
+- The noVNC page and WebSocket require a session-scoped viewer ticket that becomes invalid when that browser session closes. Nginx access logging is disabled for ticket-bearing viewer and WebSocket requests. The app uses HTTPS for its public origins; Render terminates TLS.
+- Neon PostgreSQL stores operational session metadata only: a hash of the random session token, lifecycle status, timestamps, field verification count, and provider HTTP status. It does not store applicant details, CAPTCHA values, browser contents, or document bytes. Records older than 30 days are removed at backend startup. The live Chromium session remains in backend memory and is closed on idle timeout or service restart.
+- The current Form 93 first page has no document upload control. The optional file picker stores names/references only in the current browser tab; it does not upload, inspect, or retain document bytes. There is no object-storage integration because this flow does not upload documents.
+- The backend retains form values only in the request/task memory while typing them into Protean, and does not log values. It does not persist session or applicant data to disk.
+- Origin checks and random session tokens protect browser flows but do not provide user identity or prevent a non-browser client from making a direct request. Add real user authentication, per-user authorization, abuse controls, and privacy/retention review before offering this to the public. Treat this deployment as a restricted pilot, not a general public launch.
+- The only permitted top-level provider documents are Protean's initial registration and its first response. CAPTCHA is never bypassed. If the provider blocks automation, stop and continue directly on Protean.
+
+## Tests and build
+
+From `pan-app`:
 
 ~~~powershell
-pip install -r backend\requirements-test.txt
+npm run build
+python -m compileall -q backend
 python -m unittest backend.test_app -v
 ~~~
 
-The live registration flow has been exercised against Protean through field verification and CAPTCHA handoff, without solving CAPTCHA or submitting a registration. Automated submission and CAPTCHA acceptance were not tested. Provider pages and terms can change; use Protean directly if it blocks automation or displays a restriction.
+The live Protean field-fill/CAPTCHA handoff has been exercised locally. Automated submission, CAPTCHA acceptance, public Vercel-to-backend connectivity, and a deployed browser session have not been tested by that local run.
 
-## Official pages
+## Deployment checklist
 
-- [Protean PAN registration](https://onlineservices.proteantech.in/paam/endUserRegisterContact.html)
-- [Protean Form 93 instructions](https://tinpan.proteantech.in/services/pan/instructions-form_93-form_94.html)
-- [Protean privacy policy](https://tinpan.proteantech.in/privacy-policy)
+1. Choose the Vercel frontend hostname and create the persistent Render backend from the Blueprint.
+2. Set the exact Vercel origin in Render's `VERIIDIA_CORS_ORIGINS` and deploy the backend.
+3. Set the backend HTTPS origin as Vercel's `VERIIDIA_API_BASE_URL` and deploy the frontend.
+4. Open `/api/health` on the backend and `/registration` on Vercel. Confirm Vercel's browser console has no CORS or mixed-content errors.
+5. Run one controlled test through field verification to CAPTCHA handoff, then close the session. Do not solve a CAPTCHA or submit test data unless authorized and appropriate with Protean.
+6. Keep the marketing website `https://veriidia.vercel.app/` in its existing Vercel project. Deploy this application as a separate Vercel project.

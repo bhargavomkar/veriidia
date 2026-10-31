@@ -1,0 +1,13 @@
+{
+  "name": "veriidia-pan-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check scripts/build.mjs"
+  }
+}

@@ -14,10 +14,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from urllib.parse import urlparse
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from backend import database
 
 PROTEAN_URL = "https://onlineservices.proteantech.in/paam/endUserRegisterContact.html"
 PROTEAN_RESPONSE_PATH = "/paam/registerEndUser.html"
@@ -59,6 +61,8 @@ class ApplicantDetails(BaseModel):
 @dataclass
 class RegistrationSession:
     token: str
+    viewer_ticket: str | None
+    session_id: UUID
     playwright: Playwright
     browser: Browser
     context: BrowserContext
@@ -92,6 +96,10 @@ async def _close(state: RegistrationSession) -> None:
             if state.closed:
                 return
             state.closed = True
+            try:
+                await database.record_update(state.session_id, "closed", len(state.results), closed=True)
+            except Exception:
+                logger.exception("Could not update registration session record during cleanup")
             if state.fill_task and not state.fill_task.done():
                 state.fill_task.cancel()
                 try:
@@ -133,6 +141,19 @@ async def _get(authorization: str | None) -> RegistrationSession:
         raise HTTPException(status_code=401, detail="This registration session has expired.")
     state.last_activity = time.monotonic()
     return state
+
+
+async def _record_state(state: RegistrationSession, *, provider_http_status: int | None = None) -> None:
+    try:
+        verified_count = sum(item.get("status") in {"verified", "not required by provider for Form 93"} for item in state.results)
+        await database.record_update(
+            state.session_id,
+            state.status,
+            verified_count,
+            provider_http_status=provider_http_status,
+        )
+    except Exception:
+        logger.exception("Could not update the PII-free registration session record")
 
 
 def _allowed(url: str, resource_type: str) -> bool:
@@ -352,6 +373,7 @@ async def _run_fill(state: RegistrationSession, details: ApplicantDetails) -> No
     try:
         state.results = []
         await _fill_actual_form(state.page, details, state)
+        await _record_state(state)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -360,6 +382,7 @@ async def _run_fill(state: RegistrationSession, details: ApplicantDetails) -> No
         state.current_field = None
         state.stage = "stopped during field entry"
         logger.exception("Provider field entry stopped safely: exception=%s", type(exc).__name__)
+        await _record_state(state)
     finally:
         for key in details.model_fields:
             try:
@@ -394,8 +417,8 @@ async def start_registration():
             logger.info("Provider page created")
             state = RegistrationSession(
                 token=secrets.token_urlsafe(32), playwright=playwright, browser=browser,
-                context=context, page=page, status="opening_provider_page", results=[],
-                last_activity=time.monotonic(),
+                context=context, page=page, status="opening_provider_page", results=[], viewer_ticket=None,
+                last_activity=time.monotonic(), session_id=uuid4(),
             )
             state.pause_event.set()
             active = state
@@ -427,6 +450,7 @@ async def start_registration():
                         body = await response.text()
                         state.actual_response = {"httpStatus": response.status, "url": response.url, "text": body[:12000]}
                         state.status = "provider_response_received"
+                        await _record_state(state, provider_http_status=response.status)
                         logger.info("Actual initial provider response received: http_status=%d", response.status)
                 except Exception:
                     logger.error("Could not capture the initial provider response")
@@ -439,7 +463,8 @@ async def start_registration():
             stage = "waiting for user details"
             state.stage = stage
             state.status = "ready_to_fill"
-            in_app_viewer = os.getenv("APP_ENV", "development") == "local"
+            await database.record_created(state.session_id, state.token, state.status)
+            in_app_viewer = not headless
             logger.info("Real Protean registration page ready for sequential entry")
             return {
                 "status": state.status,
@@ -490,6 +515,24 @@ async def start_registration():
             raise HTTPException(status_code=502, detail=detail) from None
 
 
+@router.post("/viewer-ticket")
+async def create_viewer_ticket(authorization: str | None = Header(default=None)):
+    state = await _get(authorization)
+    await ensure_browser_open(state.page, "authorizing the browser viewer")
+    state.viewer_ticket = secrets.token_urlsafe(24)
+    return {"ticket": state.viewer_ticket}
+
+
+@router.get("/viewer-authorized")
+async def authorize_browser_viewer(ticket: str | None = None):
+    state = active
+    if not ticket or not state or state.closed or not state.viewer_ticket:
+        raise HTTPException(status_code=401, detail="The browser viewer session is not authorized.")
+    if not secrets.compare_digest(state.viewer_ticket, ticket):
+        raise HTTPException(status_code=401, detail="The browser viewer session is not authorized.")
+    return {"status": "authorized"}
+
+
 @router.post("/fill")
 async def fill_registration(details: ApplicantDetails, authorization: str | None = Header(default=None)):
     state = await _get(authorization)
@@ -499,6 +542,7 @@ async def fill_registration(details: ApplicantDetails, authorization: str | None
     state.error = None
     state.pause_event.set()
     state.fill_task = asyncio.create_task(_run_fill(state, details))
+    await _record_state(state)
     return {"status": "filling_provider_fields", "fieldsTotal": 8}
 
 
@@ -509,6 +553,7 @@ async def pause_registration(authorization: str | None = Header(default=None)):
         raise HTTPException(status_code=409, detail="There is no active field entry to pause.")
     state.pause_event.clear()
     state.status = "paused"
+    await _record_state(state)
     return {"status": state.status, "currentField": state.current_field}
 
 
@@ -519,6 +564,7 @@ async def resume_registration(authorization: str | None = Header(default=None)):
         raise HTTPException(status_code=409, detail="The field entry is not paused.")
     state.status = "filling_provider_fields"
     state.pause_event.set()
+    await _record_state(state)
     return {"status": state.status}
 
 
@@ -538,6 +584,7 @@ async def registration_status(authorization: str | None = Header(default=None)):
             text = (await state.page.locator("body").inner_text(timeout=5000)).strip()
             state.actual_response = {"httpStatus": state.provider_response_status, "url": provider_url, "text": text[:12000]}
             state.status = "provider_response_received"
+            await _record_state(state, provider_http_status=state.provider_response_status)
             logger.info("Actual provider response received after manual provider submission: http_status=%d", state.provider_response_status)
         except Exception as exc:
             logger.error("Could not read initial provider response: exception=%s", type(exc).__name__)
@@ -587,6 +634,7 @@ async def captcha_complete(authorization: str | None = Header(default=None)):
             state.stage = "waiting for user-controlled Protean submission"
             logger.info("Provider CAPTCHA is present; automated submission disabled pending verified provider permission")
             message = "CAPTCHA response detected locally. Protean must still validate it. Provider-specific permission for automated submission is unverified, so use Protean’s own Submit control if you choose."
+        await _record_state(state)
         return {"status": state.status, "automatedSubmissionPermitted": AUTOMATED_SUBMISSION_PERMITTED, "message": message}
 
 
@@ -612,6 +660,7 @@ async def _submit_initial_registration(state: RegistrationSession, payload: Subm
     state.submission_started = True
     state.status = "submission_in_progress"
     state.stage = "submitting initial Protean registration"
+    await _record_state(state)
     logger.info("Submission attempted after explicit user authorization")
     submit_button = state.page.locator("#submitForm")
     if await submit_button.count() != 1:
@@ -637,11 +686,13 @@ async def _submit_initial_registration(state: RegistrationSession, payload: Subm
                 text = ""
             state.status = "provider_response_received"
             state.actual_response = {"httpStatus": response.status, "url": response.url, "text": text[:12000]}
+            await _record_state(state, provider_http_status=response.status)
             logger.info("Actual provider response received: http_status=%d", response.status)
     except Exception:
         state.status = "outcome_uncertain_no_retry"
         logger.error("Submission response could not be confirmed; automatic retry disabled")
         state.actual_response = None
+        await _record_state(state)
     return {"status": state.status, "actualResponse": state.actual_response}
 
 

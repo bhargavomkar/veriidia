@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>Veriidia — Protean Registration Assistance</title>
+  <script src="/veriidia-config.js"></script>
   <style>
     :root{--paper:#f7f7f5;--panel:#fff;--soft:#eeeeec;--ink:#171717;--muted:#73736f;--line:#deded9;--blue:#315eca;--red:#9b2c2c}
     *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -85,8 +86,9 @@
       let sessionToken = '';
       let sessionHeartbeat = null;
       let submissionAttempted = false;
+      const API_BASE = (window.VERIIDIA_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
       const api = async (path, method='GET', body) => {
-        const response = await fetch('/api/registration'+path, {method, headers:{...(sessionToken?{Authorization:'Bearer '+sessionToken}:{}), ...(body?{'Content-Type':'application/json'}:{})}, body:body?JSON.stringify(body):undefined});
+        const response = await fetch(API_BASE+'/api/registration'+path, {method, headers:{...(sessionToken?{Authorization:'Bearer '+sessionToken}:{}), ...(body?{'Content-Type':'application/json'}:{})}, body:body?JSON.stringify(body):undefined});
         const result = await response.json().catch(()=>({}));
         if(!response.ok) throw new Error(result.detail || 'The registration session could not continue.');
         return result;
@@ -142,7 +144,7 @@
             try{await api('/fill','POST',values())}catch(error){status.textContent=error.message;status.classList.add('error');document.querySelector('#manual-fallback').classList.remove('hidden')}
           };
           const onViewerLoad=()=>beginFill();
-          if(result.viewer){const frame=document.querySelector('#provider-browser');frame.addEventListener('load',onViewerLoad,{once:true});frame.src=result.viewer;frame.classList.remove('hidden')}
+          if(result.viewer){const viewerAccess=await api('/viewer-ticket','POST');const viewerUrl=new URL(result.viewer,API_BASE||window.location.origin);viewerUrl.searchParams.set('ticket',viewerAccess.ticket);viewerUrl.searchParams.set('path','websockify?ticket='+viewerAccess.ticket);const frame=document.querySelector('#provider-browser');frame.addEventListener('load',onViewerLoad,{once:true});frame.src=viewerUrl.href;frame.classList.remove('hidden')}
           else await beginFill();
           startSessionHeartbeat();
         } catch(error) {
